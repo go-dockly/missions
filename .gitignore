@@ -1,0 +1,8 @@
+**/.DS_Store
+**/.vscode/
+**/build/
+**/raylib/
+hot/
+**.o
+**/ols.json
+missions/
