@@ -95,4 +95,267 @@ Then run matching and mapping using the COLMAP workflow appropriate for the foot
 - The sampling interval is a target interval, not a guarantee that every sampled image is useful for SfM.
 - Video frame timestamps in the manifest are nominal sample timestamps (`frame index × interval`). They do not account for unusual source stream start-time offsets.
 - This first version does not perform blur filtering, perceptual deduplication, scene-change detection or image selection. Those are deliberate follow-up steps: first inspect contact sheets and reconstruction quality before adding heuristics.
-- Use only footage you are authorized to process. Public availability does not itself grant reuse or redistribution rights.
+
+## Sorting & Filtering
+
+we'll probably end up with hundreds of images of the bridge and comparatively few images of the gorge, slopes, forest and approaches.
+
+**Recommendation: don't enforce uniformity of video quality, lighting, weather or season. Enforce geometric consistency within individual reconstruction groups, and diversity across the overall dataset.**
+
+There is a big difference between reconstructing a 3D environment and creating a photorealistic panorama. We want the former.
+
+## **1. What matters for photogrammetry?**
+
+| Factor                     | Importance | Recommendation                      |
+| -------------------------- | ---------- | ----------------------------------- |
+| Camera viewpoint diversity | Critical   | Maximize                            |
+| Image overlap              | Critical   | Maintain                            |
+| Sharpness / motion blur    | Critical   | Reject blurry frames                |
+| Exposure consistency       | High       | Prefer consistent within a sequence |
+| Resolution                 | High       | Avoid extreme differences           |
+| Weather                    | Medium     | Clear visibility preferred          |
+| Time of day                | Medium     | Consistent within a sequence        |
+| Season                     | Low–medium | Can mix, with precautions           |
+| Sky appearance             | Low        | Usually not important               |
+
+The most important thing is that the same physical features remain recognizable across images.
+
+For example, a rock formation visible in 30 drone images from different angles is excellent.
+
+A bridge visible in 300 images from practically the same angle is mostly redundant.
+
+## **2. Can we mix seasons, weather and cameras?**
+
+Yes, but I'd distinguish between reconstruction and appearance.
+
+**Summer / lush vegetation**
+
+Excellent for reconstructing vegetation and identifying paths, but foliage can obscure terrain.
+
+Good source
+
+**Autumn**
+
+Different vegetation appearance and potentially better visibility through partially bare trees.
+
+Good supplementary source
+
+**Winter**
+
+Can reveal terrain hidden by foliage, but snow and seasonal ground changes complicate matching.
+
+Separate reconstruction group
+
+**Overcast / cloudy**
+
+Often excellent for photogrammetry because diffuse lighting reduces harsh shadows.
+
+Good source
+
+### **Rules for mixing material**
+
+- Different cameras: absolutely fine.
+- Different resolutions: fine, although avoid mixing tiny and very high-resolution images indiscriminately.
+- Different white balances: generally fine.
+- Different cloud conditions: fine.
+- Different seasons: useful for additional reference, but don't blindly merge into one reconstruction.
+- Snow-covered terrain versus snow-free terrain: keep separate.
+- Changed vegetation, river levels or construction: treat as potentially different geometry.
+
+One subtle issue: changing shadows can confuse feature matching. A rock in sunlight and the same rock under a completely different shadow may be less reliably matched.
+
+## **3. The biggest danger: bridge bias**
+
+I'd explicitly divide Gorgopotamos into geographical reconstruction zones.
+
+Our dataset should cover:
+
+## **Gorgopotamos coverage map**
+
+Conceptual reconstruction zones, not measured boundaries.
+
+# **01**
+
+**Bridge**
+
+Structure, piers, abutments, tracks
+
+# **02**
+
+**Northern gorge**
+
+Rock faces, slopes, vegetation
+
+# **03**
+
+**Southern gorge**
+
+Riverbanks, approaches, terrain
+
+# **04**
+
+**Western approach**
+
+Paths, forest, elevated ground
+
+# **05**
+
+**Eastern approach**
+
+Access routes and surrounding terrain
+
+# **06**
+
+**Riverbed**
+
+Boulders, banks and water course
+
+I would initially aim for something like this:
+
+| Zone             | Target share of selected images |
+| ---------------- | ------------------------------- |
+| Bridge           | 20%                             |
+| Northern gorge   | 20%                             |
+| Southern gorge   | 20%                             |
+| Western approach | 15%                             |
+| Eastern approach | 15%                             |
+| Riverbed         | 10%                             |
+
+These aren't strict photogrammetry quotas. They're coverage targets to prevent the bridge from dominating our dataset.
+
+Importantly, a single image can cover multiple zones.
+
+## **4. We should improve the collector to understand coverage**
+
+This is where I think we should invest next.
+
+Currently, our collector knows:
+
+- Source video.
+- Timestamp.
+- Resolution.
+- Category.
+- Frame number.
+
+It doesn't know whether a frame is useful.
+
+I'd introduce a richer metadata model:
+
+```
+type FrameMetadata struct {
+    Source      string
+    Timestamp   time.Duration
+
+    Category    string
+    Zone        string
+
+    Width       int
+    Height      int
+
+    Sharpness   float64
+    Brightness  float64
+
+    PerceptualHash string
+
+    Season      string
+    Weather     string
+    TimeOfDay   string
+
+    Selected    bool
+    Rejection   string
+}
+```
+
+Not every field needs automatic detection. Zone, season and weather can initially be manually assigned to a video or frame range.
+
+### **A particularly useful feature: contact-sheet review**
+
+We should eventually have:
+
+```
+reference-collector analyze \
+    --input ./gorgopotamos
+
+reference-collector contact-sheet \
+    --input ./gorgopotamos \
+    --group-by source
+
+reference-collector select \
+    --input ./gorgopotamos \
+    --max-similarity 0.95
+
+reference-collector report \
+    --input ./gorgopotamos
+```
+
+The report could show:
+
+- Number of source videos.
+- Total extracted frames.
+- Frames by resolution.
+- Frames by category.
+- Frames by geographical zone.
+- Blur distribution.
+- Duplicate percentage.
+- Estimated coverage gaps.
+
+I'd keep the original extracted frames immutable and put selection decisions into a separate manifest. That way we can change selection strategies without repeatedly extracting everything.
+
+## **5. One important distinction: COLMAP versus 3DGS**
+
+We should not optimize both for exactly the same thing.
+
+**COLMAP / photogrammetry**
+
+Wants stable visual features, sufficient overlap, sharpness and geometrically consistent viewpoints.
+
+**3D Gaussian Splatting**
+
+Benefits from diverse camera positions and good visibility of the scene, but can suffer when images depict different seasons, vegetation states or lighting conditions.
+
+My preference:
+
+1. Reconstruct geometry from the best consistent image groups.
+2. Align the separate reconstructions.
+3. Use geometry to establish a common world.
+4. Select a visually consistent subset for Gaussian splatting.
+5. Use additional seasonal footage as reference for vegetation and environmental assets.
+
+We should not let a beautiful but geometrically inconsistent image contaminate the foundation.
+
+## **6. What I would implement next**
+
+Recommended next milestone
+
+**Reference Collector v0.2 — Dataset Intelligence**
+
+| Feature                                 | Priority |
+| --------------------------------------- | -------- |
+| Perceptual duplicate detection          | P0       |
+| Blur detection                          | P0       |
+| Contact sheet generation                | P0       |
+| Video-level metadata/tags               | P0       |
+| Frame selection manifest                | P1       |
+| Geographical zone tagging               | P1       |
+| Coverage report                         | P1       |
+| Automatic season/weather classification | P2       |
+
+One further thought: let's avoid throwing away images just because they look similar. A stationary camera can still capture useful geometry if the subject moves, although moving objects themselves should generally be masked or excluded from reconstruction.
+
+**The guiding principle for Gorgopotamos should be: maximize spatial coverage, not frame count.**
+
+I'd rather have 800 sharp images covering the entire gorge from diverse viewpoints than 8,000 images of the railway bridge.
+
+We could split it into three stages:
+1. Quality analysis
+   - Detect blurry frames using Laplacian variance.
+   - Detect exact and perceptual duplicates.
+   - Record resolution and image dimensions.
+2. Visual review
+   - Generate contact sheets grouped by source video.
+   - Sort frames by quality.
+   - Mark the sharpest frame in each near-duplicate group as the preferred candidate.
+3. Coverage review
+   - Organise aerial, ground and railway material.
+   - Tag geographic zones: bridge, north gorge, south gorge, west approach, east approach and riverbed.
+   - Avoid selecting only the prettiest images at the expense of spatial coverage.
