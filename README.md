@@ -1,4 +1,4 @@
-# reference-collector
+# commandos missions reference collector
 
 A small Go CLI for turning local video references into a timestamped image dataset for COLMAP.
 

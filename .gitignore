@@ -5,4 +5,5 @@
 hot/
 **.o
 **/ols.json
-missions/
+**.mp4
+**.jpg
