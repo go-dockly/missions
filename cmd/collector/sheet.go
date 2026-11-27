@@ -102,7 +102,7 @@ body.hide-rejected figure:not(.keep) { display:none; }
 <body>
 <h1>{{.Sel.Kept}} of {{.Sel.Frames}} frames kept</h1>
 <div class="meta">generated {{.Sel.GeneratedAt.Format "2006-01-02 15:04"}} UTC ·
-keyframe every {{f2 .Sel.Settings.MinShift}} shift / {{f2 .Sel.Settings.MinResidual}} residual · blur {{f2 .Sel.Settings.BlurRel}}× shot median · flat {{f2 .Sel.Settings.Flat}} · duplicate {{f2 .Sel.Settings.Dup}}</div>
+keyframe every {{f2 .Sel.Settings.MinShift}} shift / {{f2 .Sel.Settings.MinResidual}} residual · blur {{f2 .Sel.Settings.BlurRel}}× nearby median · flat {{f2 .Sel.Settings.Flat}} · duplicate {{f2 .Sel.Settings.Dup}}</div>
 <div class="bar">
   <label><input type="checkbox" id="rejected" checked> rejected</label>
   <span><span class="sw keep"></span>kept {{.Sel.Kept}}</span>
@@ -119,7 +119,7 @@ rejected: {{.ReasonText}} · sharpness p10/p50/p90 {{f0 .SharpP10}}/{{f0 .SharpP
 <figure class="{{.Class}}{{if .Warn}} warn{{end}}" data-t="{{.TimestampMS}}" data-s="{{.Sharpness}}" title="{{.Path}}
 {{.Label}}{{if .Ref}} → {{.Ref}}{{end}}{{if .Warn}}
 {{.Warn}}{{end}}
-sharpness {{f0 .Sharpness}} ({{f2 .RelSharpness}}× shot median)
+sharpness {{f0 .Sharpness}} ({{f2 .RelSharpness}}× nearby median)
 brightness {{f0 .M.Brightness}} · contrast {{f0 .M.Contrast}} · clipped {{f2 .M.Clipped}} · flat {{f2 .M.Flat}}">
 <a href="{{.Path}}" target="_blank"><img loading="lazy" src="{{.Path}}" alt=""></a>
 <figcaption><span>#{{.Frame}} {{.Time}}</span><span>{{.Label}}</span></figcaption>

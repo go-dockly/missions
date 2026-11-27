@@ -103,14 +103,14 @@ The manifest is updated incrementally. Re-running extraction for a source replac
 | clipped | share of crushed (<8) or blown (>247) pixels | |
 | flat | share of 8×8 blocks with almost no texture | sky, haze, fades, title-card backgrounds |
 | histogram | 16-bin luma histogram | cut detection fallback |
-| thumb | 64×36 luma thumbnail | everything about motion and duplicates |
+| thumb | 64×36 luma thumbnail | everything about motion and duplicates; smoothed before comparing, so foliage moving under a pixel doesn't read as a new view |
 
 ## Select
 
 `select` decides per frame and gives every rejected frame a reason:
 
-1. **Shots.** Frames are grouped into shots by the cuts from `extract`. Frames of different shots are never treated as neighbours.
-2. **Quality**, per shot: `dark`, `bright`, `exposure` (clipped), `flat`, then `blur` when sharpness is below half the shot's median. The threshold is relative because sharpness depends on content (forest vs. water) and on the source.
+1. **Shots.** Frames are grouped into shots by the cuts from `extract`. A frame right at a cut moves to the side it aligns with, because manifest times are nominal and `scdet`'s are the source's. Frames of different shots are never treated as neighbours.
+2. **Quality**, per shot: `dark` (a fade; dim footage sits well above the threshold of 12), `bright`, `exposure` (clipped), `flat`, then `blur` when sharpness is below half the median of the frames within ±4 samples. Blur is judged against neighbours because motion blur lasts a few samples, while sharpness also follows content (a crisp truss, hazy distant slopes) for much longer.
 3. **Keyframes**, per shot: two frames are compared by aligning their thumbnails (the best global shift, coarse to fine). That gives the *shift* (1 − overlap) and the *residual* left after aligning, which picks up forward flight, zoom, turns and parallax. A window of frames runs while the view stays within `--min-shift` 0.2 and `--min-residual` 0.4 of its first frame. The sharpest frame of each window is kept and the rest are `similar`, with a reference to the kept frame. Kept neighbours overlap roughly 60–80%.
 4. **Duplicates** across shots and sources: a kept frame that aligns with a better kept frame (more pixels, then sharper) from another shot or source with residual below `--duplicate` 0.25 is a `duplicate`. This catches re-uploads, drone revisits and the famous angle twenty pilots filmed.
 5. **Gaps**: consecutive samples that moved more than `--gap-shift` 0.35 or don't align (`--gap-residual` 0.6) get a warning. That source needs a denser `--interval`.

@@ -14,11 +14,11 @@ import (
 // Settings are select's thresholds. Defaults are starting points to tune by
 // eye on sheet.html, not measured optima.
 type Settings struct {
-	Dark         float64 `json:"dark"`          // mean luma below: fade or night
+	Dark         float64 `json:"dark"`          // mean luma below: a fade (dim footage sits well above)
 	Bright       float64 `json:"bright"`        // mean luma above: blown out or white card
 	Clipped      float64 `json:"clipped"`       // share of crushed/blown pixels above
 	Flat         float64 `json:"flat"`          // share of textureless blocks above: sky, haze, title card
-	BlurRel      float64 `json:"blur_relative"` // sharpness below this share of the shot's median
+	BlurRel      float64 `json:"blur_relative"` // sharpness below this share of the median of nearby frames
 	MinSharpness float64 `json:"min_sharpness"` // absolute floor (0: off); rejects whole soft sources
 	// A keyframe window ends when the view has moved MinShift (1 - overlap)
 	// or changed by MinResidual after aligning (forward flight, turns).
@@ -36,9 +36,13 @@ type Settings struct {
 	CutResidual float64 `json:"cut_residual"`
 }
 
+// blurRadius is how many samples either side a frame's sharpness is
+// compared with (±2 s at the default 500 ms).
+const blurRadius = 4
+
 func defaultSettings() Settings {
 	return Settings{
-		Dark: 25, Bright: 235, Clipped: 0.4, Flat: 0.85,
+		Dark: 12, Bright: 240, Clipped: 0.4, Flat: 0.85,
 		BlurRel: 0.5, MinSharpness: 0,
 		MinShift: 0.2, MinResidual: 0.4,
 		GapShift: 0.35, GapResidual: 0.6, Dup: 0.25,
@@ -58,7 +62,7 @@ type Decision struct {
 	Ref         string  `json:"ref,omitempty"`    // the kept frame that stands in for it
 	Warn        string  `json:"warn,omitempty"`
 	Sharpness   float64 `json:"sharpness"`
-	// RelSharpness is sharpness over the shot's median, for sorting the sheet.
+	// RelSharpness is sharpness over the median of nearby frames (the blur test).
 	RelSharpness float64 `json:"relative_sharpness"`
 
 	metrics Metrics
@@ -117,7 +121,7 @@ func runSelect(args []string) error {
 	flags.Float64Var(&s.Bright, "bright", s.Bright, "reject mean luma above (0-255)")
 	flags.Float64Var(&s.Clipped, "clipped", s.Clipped, "reject share of crushed/blown pixels above")
 	flags.Float64Var(&s.Flat, "flat", s.Flat, "reject share of textureless blocks above (sky, title cards)")
-	flags.Float64Var(&s.BlurRel, "blur", s.BlurRel, "reject sharpness below this share of the shot median")
+	flags.Float64Var(&s.BlurRel, "blur", s.BlurRel, "reject sharpness below this share of nearby frames' median")
 	flags.Float64Var(&s.MinSharpness, "min-sharpness", s.MinSharpness, "reject sharpness below (0: off)")
 	flags.Float64Var(&s.MinShift, "min-shift", s.MinShift, "new keyframe once the view moved this much (1 - overlap)")
 	flags.Float64Var(&s.MinResidual, "min-residual", s.MinResidual, "...or changed this much after aligning (0 same, ~1.1 unrelated)")
@@ -266,6 +270,29 @@ func assignShotsByCuts(frames []*Decision, cuts []int64) {
 		d.Shot = sort.Search(len(cuts), func(i int) bool { return cuts[i] > d.TimestampMS })
 	}
 	renumber(frames)
+	snapCuts(frames)
+}
+
+// snapCuts moves a frame next to a cut to the side it belongs to. The
+// manifest's timestamps are nominal (index × interval) while scdet's are
+// the source's, so the sample at a cut can land on either side of it.
+func snapCuts(frames []*Decision) {
+	usable := func(i int) bool { return i >= 0 && i < len(frames) && frames[i].Reason != reasonMissing }
+	residual := func(i, j int) float64 { return align(frames[i].view, frames[j].view).Residual }
+	for i := 0; i+1 < len(frames); i++ {
+		p, n := i, i+1
+		if frames[p].Shot == frames[n].Shot || !usable(p) || !usable(n) {
+			continue
+		}
+		across := residual(p, n)
+		switch {
+		case usable(p-1) && frames[p-1].Shot == frames[p].Shot && across < residual(p-1, p):
+			frames[p].Shot = frames[n].Shot // p already shows the next shot
+		case usable(n+1) && frames[n+1].Shot == frames[n].Shot && across < residual(n, n+1):
+			frames[n].Shot = frames[p].Shot // n still shows the previous one
+		}
+	}
+	renumber(frames)
 }
 
 // assignShotsByFrames is the fallback for manifests without scdet cuts. At
@@ -304,7 +331,6 @@ func renumber(frames []*Decision) {
 // selectShot applies the quality rules, then keeps the sharpest frame of each
 // window of nearly-identical views. Returns the number of gap warnings.
 func selectShot(frames []*Decision, s Settings) int {
-	var textured []float64
 	for _, d := range frames {
 		if d.Reason != "" {
 			continue
@@ -319,13 +345,20 @@ func selectShot(frames []*Decision, s Settings) int {
 			d.Reason = reasonExposure
 		case m.Flat > s.Flat:
 			d.Reason = reasonFlat
-		default:
-			textured = append(textured, d.Sharpness)
 		}
 	}
-	median := percentile(textured, 0.5)
+	// Blur is judged against the frame's neighbours, not the whole shot:
+	// motion blur lasts a few samples, while what the camera looks at (sharp
+	// truss, hazy distant slopes) changes sharpness for longer than that.
 	var candidates []*Decision
-	for _, d := range frames {
+	for i, d := range frames {
+		var near []float64
+		for _, o := range frames[max(0, i-blurRadius):min(len(frames), i+blurRadius+1)] {
+			if o.Reason == "" || o.Reason == reasonBlur {
+				near = append(near, o.Sharpness)
+			}
+		}
+		median := percentile(near, 0.5)
 		if median > 0 {
 			d.RelSharpness = d.Sharpness / median
 		}

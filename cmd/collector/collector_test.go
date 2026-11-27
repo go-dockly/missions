@@ -350,3 +350,43 @@ func TestSelectReturnPass(t *testing.T) {
 		t.Errorf("out %d kept, back %d kept: %s", out, back, got)
 	}
 }
+
+func TestSnapCuts(t *testing.T) {
+	a, b := texture(1800, 900, 11), texture(1800, 900, 12)
+	f := &flight{t: t}
+	for i := 0; i < 4; i++ {
+		f.add("a", crop(a, 30*i, 0, 1280, 720))
+	}
+	for i := 0; i < 4; i++ {
+		f.add("a", crop(b, 30*i, 0, 1280, 720))
+	}
+	// scdet's time lands a little after the nominal time of the first new
+	// frame (2000 ms), so that frame starts out in the old shot.
+	f.source("a", []int64{2070})
+	sel := selectFrames(f.manifest, f.analysis, defaultSettings())
+	if got := sel.Decisions[4].Shot; got != 1 {
+		t.Errorf("first frame of the new view in shot %d: %s", got, decisions(sel, "a"))
+	}
+	if got := sel.Decisions[3].Shot; got != 0 {
+		t.Errorf("last frame of the old view in shot %d", got)
+	}
+}
+
+func TestBlurIsLocal(t *testing.T) {
+	// One shot: ten samples of crisp detail, then ten of soft, hazy content
+	// (as when the camera turns from the truss to distant slopes). The soft
+	// stretch is content, not motion blur, and must not be rejected.
+	crisp, soft := texture(2000, 900, 13), boxBlur(texture(2000, 900, 14), 3)
+	f := &flight{t: t}
+	for i := 0; i < 10; i++ {
+		f.add("a", crop(crisp, 40*i, 0, 1280, 720))
+	}
+	for i := 0; i < 10; i++ {
+		f.add("a", crop(soft, 40*i, 0, 1280, 720))
+	}
+	f.source("a", []int64{})
+	sel := selectFrames(f.manifest, f.analysis, defaultSettings())
+	if sel.Reasons[reasonBlur] > 0 {
+		t.Errorf("soft stretch rejected as blur: %s", decisions(sel, "a"))
+	}
+}

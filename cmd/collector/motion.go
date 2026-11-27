@@ -46,11 +46,33 @@ func decodeView(s string) (view, error) {
 	for i, b := range raw {
 		g.px[i] = float32(b)
 	}
+	// Smooth before comparing: at 64×36, foliage and rubble are close to
+	// noise, and a sub-pixel move would read as a change of view.
+	g = smooth(smooth(g))
 	return view{
 		fine:   normalise(g),
 		coarse: normalise(resize(g, thumbW/2, thumbH/2)),
 		tiny:   normalise(resize(g, thumbW/4, thumbH/4)),
 	}, nil
+}
+
+// smooth is a [1 2 1] binomial blur, edges clamped.
+func smooth(g gray) gray {
+	tmp := make([]float32, len(g.px))
+	out := gray{w: g.w, h: g.h, px: make([]float32, len(g.px))}
+	at := func(v, lo, hi int) int { return min(max(v, lo), hi) }
+	for y := 0; y < g.h; y++ {
+		for x := 0; x < g.w; x++ {
+			r := g.px[y*g.w:]
+			tmp[y*g.w+x] = (r[at(x-1, 0, g.w-1)] + 2*r[x] + r[at(x+1, 0, g.w-1)]) / 4
+		}
+	}
+	for y := 0; y < g.h; y++ {
+		for x := 0; x < g.w; x++ {
+			out.px[y*g.w+x] = (tmp[at(y-1, 0, g.h-1)*g.w+x] + 2*tmp[y*g.w+x] + tmp[at(y+1, 0, g.h-1)*g.w+x]) / 4
+		}
+	}
+	return out
 }
 
 func normalise(g gray) plane {
