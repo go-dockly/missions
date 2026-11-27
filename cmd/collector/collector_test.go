@@ -5,6 +5,8 @@ import (
 	"image"
 	"math"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -388,5 +390,47 @@ func TestBlurIsLocal(t *testing.T) {
 	sel := selectFrames(f.manifest, f.analysis, defaultSettings())
 	if sel.Reasons[reasonBlur] > 0 {
 		t.Errorf("soft stretch rejected as blur: %s", decisions(sel, "a"))
+	}
+}
+
+func TestReportMissing(t *testing.T) {
+	dir := t.TempDir()
+	input, images := filepath.Join(dir, "videos"), filepath.Join(dir, "images")
+	for _, d := range []string{filepath.Join(input, "aerial"), images} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// clip.mp4 was extracted from the input root, then moved into aerial/.
+	oldFrame := filepath.Join(images, sourceID("clip.mp4")+"_000000.jpg")
+	keepFrame := filepath.Join(images, sourceID("aerial/clip.mp4")+"_000000.jpg")
+	for _, f := range []string{oldFrame, keepFrame} {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := Manifest{
+		Sources: []SourceRecord{{Path: "clip.mp4"}, {Path: "aerial/clip.mp4"}},
+		Frames:  []FrameRecord{{Path: "images/a.jpg", Source: "clip.mp4"}, {Path: "images/b.jpg", Source: "aerial/clip.mp4"}},
+	}
+	videos := []string{filepath.Join(input, "aerial", "clip.mp4")}
+
+	if err := reportMissing(&m, input, videos, images, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Sources) != 2 {
+		t.Fatalf("without --prune the manifest must not change: %v", m.Sources)
+	}
+	if err := reportMissing(&m, input, videos, images, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Sources) != 1 || m.Sources[0].Path != "aerial/clip.mp4" || len(m.Frames) != 1 {
+		t.Errorf("after prune: %v %v", m.Sources, m.Frames)
+	}
+	if _, err := os.Stat(oldFrame); !os.IsNotExist(err) {
+		t.Errorf("old frame kept: %v", err)
+	}
+	if _, err := os.Stat(keepFrame); err != nil {
+		t.Errorf("other source's frame removed: %v", err)
 	}
 }

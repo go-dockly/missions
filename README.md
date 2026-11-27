@@ -66,6 +66,8 @@ The default interval is 500ms, denser than COLMAP needs: `select` picks keyframe
 
 `extract` also finds shot cuts with FFmpeg's `scdet` filter in a second full-rate pass (`--cuts=false` skips it, `--cut-threshold` tunes it, default 10). Cuts go into the manifest (`cuts_ms`). Datasets extracted before this still work: `select` then finds cuts between frames instead.
 
+The manifest keeps every source it has seen. When a video is moved or renamed, `extract` would add it a second time; instead it warns about sources it can't find under `--input` (and guesses where a moved one went). `--prune` removes those sources and their frames. Pruning is opt-in because extracting one subfolder into a shared dataset (below) is legitimate.
+
 Single category for a folder:
 
 ```bash

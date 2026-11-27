@@ -88,6 +88,7 @@ func runExtract(args []string) error {
 	categoryOverride := flags.String("category", "", "category override")
 	includeHistorical := flags.Bool("include-historical", false, "include historical footage")
 	recursive := flags.Bool("recursive", true, "walk input recursively")
+	prune := flags.Bool("prune", false, "remove manifest sources (and their frames) whose video is not under --input")
 	ffmpeg := flags.String("ffmpeg", "ffmpeg", "ffmpeg executable")
 	ffprobe := flags.String("ffprobe", "ffprobe", "ffprobe executable")
 	quality := flags.Int("quality", 2, "JPEG quality (1 best, 31 worst)")
@@ -166,6 +167,10 @@ func runExtract(args []string) error {
 	manifest.Version = 1
 	manifest.GeneratedAt = time.Now().UTC()
 	manifest.Interval = interval.String()
+
+	if err := reportMissing(&manifest, inputAbs, videos, imageDir, *prune); err != nil {
+		return err
+	}
 
 	fps := 1.0 / interval.Seconds()
 	fpsText := strconv.FormatFloat(fps, 'f', 8, 64)
@@ -272,6 +277,57 @@ func runExtract(args []string) error {
 	fmt.Printf("COLMAP images: %s\nManifest:      %s\n", imageDir, manifestPath)
 	if failed > 0 {
 		return fmt.Errorf("%d video(s) failed; see messages above", failed)
+	}
+	return nil
+}
+
+// reportMissing finds manifest sources with no video under input: moved or
+// renamed videos (which extract would otherwise add a second time) or
+// videos deleted on purpose. Without prune it only warns, because running
+// extract on one subfolder into a shared dataset is legitimate.
+func reportMissing(m *Manifest, inputAbs string, videos []string, imageDir string, prune bool) error {
+	present := map[string]bool{}
+	byName := map[string]string{}
+	for _, v := range videos {
+		rel, err := filepath.Rel(inputAbs, v)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		present[rel] = true
+		byName[filepath.Base(rel)] = rel
+	}
+	var missing []string
+	for _, src := range m.Sources {
+		if !present[filepath.ToSlash(src.Path)] {
+			missing = append(missing, src.Path)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	for _, path := range missing {
+		hint := ""
+		if moved, ok := byName[filepath.Base(path)]; ok {
+			hint = " (moved to " + moved + "?)"
+		}
+		if !prune {
+			fmt.Fprintf(os.Stderr, "warning: %s is in the manifest but not under --input%s\n", path, hint)
+			continue
+		}
+		prefix := sourceID(path) + "_"
+		old, _ := filepath.Glob(filepath.Join(imageDir, prefix+"*.jpg"))
+		for _, f := range old {
+			if err := os.Remove(f); err != nil {
+				return err
+			}
+		}
+		m.Frames = removeSourceFrames(m.Frames, path)
+		m.Sources = removeSourceRecords(m.Sources, path)
+		fmt.Printf("pruned %s%s: %d frame(s) removed\n", path, hint, len(old))
+	}
+	if !prune {
+		fmt.Fprintln(os.Stderr, "  re-run with --prune to remove them and their frames")
 	}
 	return nil
 }
