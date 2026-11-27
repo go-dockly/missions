@@ -19,55 +19,23 @@ import (
 	"time"
 )
 
+type probeStream struct {
+	CodecType    string `json:"codec_type"`
+	CodecName    string `json:"codec_name"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	AvgFrameRate string `json:"avg_frame_rate"`
+	Duration     string `json:"duration"`
+}
+
 type probeResult struct {
-	Streams []struct {
-		CodecType    string `json:"codec_type"`
-		CodecName    string `json:"codec_name"`
-		Width        int    `json:"width"`
-		Height       int    `json:"height"`
-		AvgFrameRate string `json:"avg_frame_rate"`
-		Duration     string `json:"duration"`
-	} `json:"streams"`
-	Format struct {
+	Streams []probeStream `json:"streams"`
+	Format  struct {
 		Duration   string `json:"duration"`
 		FormatName string `json:"format_name"`
 		Size       string `json:"size"`
 		BitRate    string `json:"bit_rate"`
 	} `json:"format"`
-}
-
-type FrameRecord struct {
-	Path        string `json:"path"`
-	Source      string `json:"source"`
-	Category    string `json:"category"`
-	TimestampMS int64  `json:"timestamp_ms"`
-	Frame       int    `json:"frame"`
-	Width       int    `json:"width"`
-	Height      int    `json:"height"`
-	Codec       string `json:"codec"`
-}
-
-type SourceRecord struct {
-	Path        string  `json:"path"`
-	Category    string  `json:"category"`
-	DurationSec float64 `json:"duration_seconds"`
-	Width       int     `json:"width"`
-	Height      int     `json:"height"`
-	Codec       string  `json:"codec"`
-	FrameRate   string  `json:"frame_rate"`
-	Frames      int     `json:"frames_extracted"`
-	// Shot cuts in source time, from ffmpeg scdet at full frame rate.
-	// CutsDetected tells "no cuts" apart from "never looked" (older manifests).
-	CutsMS       []int64 `json:"cuts_ms,omitempty"`
-	CutsDetected bool    `json:"cuts_detected,omitempty"`
-}
-
-type Manifest struct {
-	Version     int            `json:"version"`
-	GeneratedAt time.Time      `json:"generated_at"`
-	Interval    string         `json:"interval"`
-	Sources     []SourceRecord `json:"sources"`
-	Frames      []FrameRecord  `json:"frames"`
 }
 
 var videoExtensions = map[string]bool{
@@ -163,7 +131,10 @@ func runExtract(args []string) error {
 	}
 
 	manifestPath := filepath.Join(outputAbs, "manifest.json")
-	manifest := loadManifest(manifestPath)
+	manifest, err := loadManifest(manifestPath)
+	if err != nil {
+		return err
+	}
 	manifest.Version = 1
 	manifest.GeneratedAt = time.Now().UTC()
 	manifest.Interval = interval.String()
@@ -391,27 +362,13 @@ func lastLine(s string) string {
 	return s
 }
 
-func firstVideoStream(p probeResult) struct {
-	CodecType    string `json:"codec_type"`
-	CodecName    string `json:"codec_name"`
-	Width        int    `json:"width"`
-	Height       int    `json:"height"`
-	AvgFrameRate string `json:"avg_frame_rate"`
-	Duration     string `json:"duration"`
-} {
+func firstVideoStream(p probeResult) probeStream {
 	for _, s := range p.Streams {
 		if s.CodecType == "video" {
 			return s
 		}
 	}
-	return struct {
-		CodecType    string `json:"codec_type"`
-		CodecName    string `json:"codec_name"`
-		Width        int    `json:"width"`
-		Height       int    `json:"height"`
-		AvgFrameRate string `json:"avg_frame_rate"`
-		Duration     string `json:"duration"`
-	}{}
+	return probeStream{}
 }
 
 func inferCategory(rel string) string {
@@ -455,46 +412,4 @@ func sourceID(rel string) string {
 func parseFloat(s string) float64 {
 	v, _ := strconv.ParseFloat(s, 64)
 	return v
-}
-
-func loadManifest(path string) Manifest {
-	var m Manifest
-	data, err := os.ReadFile(path)
-	if err == nil {
-		_ = json.Unmarshal(data, &m)
-	}
-	return m
-}
-
-func removeSourceFrames(in []FrameRecord, source string) []FrameRecord {
-	out := in[:0]
-	for _, f := range in {
-		if f.Source != source {
-			out = append(out, f)
-		}
-	}
-	return out
-}
-
-func removeSourceRecords(in []SourceRecord, source string) []SourceRecord {
-	out := in[:0]
-	for _, s := range in {
-		if s.Path != source {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-func writeJSON(path string, value any) error {
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
 }

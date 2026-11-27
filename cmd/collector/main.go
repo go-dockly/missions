@@ -32,7 +32,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println(`reference-collector — prepare local video references for COLMAP
+	fmt.Println(`collector — turn reference videos into a COLMAP-ready image selection
 
 Usage:
   collector extract --input ./videos --output ./dataset [--interval 500ms]

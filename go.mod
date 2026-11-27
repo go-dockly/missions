@@ -1,3 +1,3 @@
-module github.com/algo-boyz/reference-collector
+module github.com/go-dockly/missions
 
 go 1.23

@@ -121,18 +121,6 @@ func runAnalyze(args []string) error {
 	return nil
 }
 
-func readManifest(path string) (Manifest, error) {
-	var m Manifest
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return m, fmt.Errorf("no manifest (run extract first): %w", err)
-	}
-	if err := json.Unmarshal(data, &m); err != nil {
-		return m, fmt.Errorf("%s: %w", path, err)
-	}
-	return m, nil
-}
-
 func readAnalysis(path string) (Analysis, error) {
 	var a Analysis
 	data, err := os.ReadFile(path)

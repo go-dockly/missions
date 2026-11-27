@@ -1,419 +1,104 @@
-# commandos missions reference collector
+# missions
 
-A small Go CLI for turning local video references into a timestamped image dataset for COLMAP.
+Reference material for commandos missions, and `collector`: a Go CLI that turns reference videos into a small, sharp, non-redundant image set for COLMAP.
 
-## Requirements
+- `missions/<name>/`: mission notes, source links and datasets
+- `docs/footage.md`: what footage helps a reconstruction, and how to mix sources
+- `cmd/collector/`: the CLI (standard library only)
 
-- Go 1.23+
-- FFmpeg
-- FFprobe (normally installed with FFmpeg)
-
-On macOS:
+## Setup
 
 ```bash
-brew install ffmpeg
-```
-
-## Build
-
-```bash
+brew install ffmpeg            # ffmpeg + ffprobe
 go build -o collector ./cmd/collector
 ```
-
-```bash
-go build -o collector ./cmd/collector
-D=missions/gorgopotamos/dataset
-./collector extract --input missions/gorgopotamos/videos --output $D
-./collector analyze --dataset $D
-./collector select  --dataset $D && open $D/sheet.html
-```
-
-## Expected input layout
-
-Category inference uses directory names. These names are recognized:
-
-```text
-videos/
-├── aerial/       # or drone/
-├── ground/       # or pov/, walk/
-├── railway/      # or rail/, train/
-└── historical/   # or history/, archive/
-```
-
-Historical folders are skipped by default because archival footage should not be mixed into the modern photogrammetry reconstruction.
 
 ## Workflow
 
 ```bash
-D=./missions/gorgopotamos
-./collector extract --input $D/videos --output $D/dataset   # frames + shot cuts
-./collector analyze --dataset $D/dataset                     # scores, cached
-./collector select  --dataset $D/dataset                     # decisions + contact sheet
-open $D/dataset/sheet.html
+D=missions/gorgopotamos/dataset
+./collector extract --input missions/gorgopotamos/videos --output $D   # frames + shot cuts
+./collector analyze --dataset $D                                       # per-frame scores, cached
+./collector select  --dataset $D                                       # decisions + contact sheet
+open $D/sheet.html
 ```
 
-Tune `select` thresholds by eye on the sheet and re-run it; it takes seconds and never touches `images/`. Re-run `analyze` only after extracting new videos (it measures only new or changed frames).
+Tune `select` by eye on the sheet and re-run it; it takes about a second and never touches `images/`. Re-run `analyze` after `extract` (it only measures new or changed frames).
 
-## Extract frames
-
-```bash
-./collector extract \
-    --input ./missions/gorgopotamos/videos \
-    --output ./missions/gorgopotamos/dataset
-```
-
-The default interval is 500ms, denser than COLMAP needs: `select` picks keyframes by how far the view moved, so a hover gives one frame and a fast pass gives many. For very fast footage (train windows, low fast passes) try `--interval 250ms`; `select` says when a source needs it.
-
-`extract` also finds shot cuts with FFmpeg's `scdet` filter in a second full-rate pass (`--cuts=false` skips it, `--cut-threshold` tunes it, default 10). Cuts go into the manifest (`cuts_ms`). Datasets extracted before this still work: `select` then finds cuts between frames instead.
-
-The manifest keeps every source it has seen. When a video is moved or renamed, `extract` would add it a second time; instead it warns about sources it can't find under `--input` (and guesses where a moved one went). `--prune` removes those sources and their frames. Pruning is opt-in because extracting one subfolder into a shared dataset (below) is legitimate.
-
-Single category for a folder:
-
-```bash
-./collector extract \
-  --input ./videos/aerial \
-  --output ./dataset \
-  --category aerial
-```
-
-Include historical folders only when explicitly requested:
-
-```bash
-./collector extract \
-  --input ./videos \
-  --output ./dataset \
-  --interval 2s \
-  --include-historical
-```
-
-## Output
+## Layout
 
 ```text
-gorgopotamos/
-├── images/
-│   ├── drone_01_a1b2c3d4_000000.jpg
-│   ├── drone_01_a1b2c3d4_000001.jpg
-│   └── ...
-└── manifest.json
+videos/                  input; the folder name sets the category
+├── aerial/              (or drone/)
+├── ground/              (or pov/, walk/)
+├── railway/             (or rail/, train/)
+└── historical/          (or history/, archive/): skipped unless --include-historical
+dataset/
+├── images/              every sampled frame, flat: <source>_<hash>_<n>.jpg
+├── manifest.json        sources, cuts and frames (extract)
+├── analysis.json        per-frame scores and thumbnails (analyze)
+├── selection.json       settings, per-source summary, a decision per frame (select)
+├── selected.txt         kept image names, for colmap --image_list_path
+└── sheet.html           contact sheet; open it from this folder
 ```
 
-All images are placed in one flat directory, ready to pass to COLMAP. The manifest records the source-relative path, inferred category, nominal timestamp, image dimensions, codec and extracted frame count.
+## extract
 
-The manifest is updated incrementally. Re-running extraction for a source replaces that source's previous frames and records while retaining records for other sources.
+Samples every video under `--input` into `images/`, every 500 ms by default. That is denser than COLMAP needs on purpose, because `select` chooses keyframes by how far the view moved. A second full-rate pass finds shot cuts with FFmpeg's `scdet` filter.
 
-## Analyze
-
-`analyze` decodes every frame once and stores, in `analysis.json`:
-
-| Score | What | Measured |
+| Flag | Default | |
 | --- | --- | --- |
-| sharpness | variance of the Laplacian | on luma scaled to 360 px high, so a 4K original and a 720p re-upload score alike |
-| brightness, contrast | mean and deviation of luma | 0–255 |
-| clipped | share of crushed (<8) or blown (>247) pixels | |
-| flat | share of 8×8 blocks with almost no texture | sky, haze, fades, title-card backgrounds |
-| histogram | 16-bin luma histogram | cut detection fallback |
-| thumb | 64×36 luma thumbnail | everything about motion and duplicates; smoothed before comparing, so foliage moving under a pixel doesn't read as a new view |
+| `--interval` | `500ms` | try `250ms` for fast footage; `select` warns when a source needs it |
+| `--category` | from folder | category for every video |
+| `--include-historical` | off | archival footage doesn't belong in a modern reconstruction |
+| `--cuts`, `--cut-threshold` | on, 10 | cut detection; lower finds more cuts |
+| `--prune` | off | remove manifest sources whose video is no longer under `--input` |
 
-## Select
+Re-extracting a source replaces its frames. A source that was moved or renamed shows up as a warning, with a guess at where it went. `--prune` removes it. Pruning is opt-in, because extracting one subfolder into a shared dataset is normal.
 
-`select` decides per frame and gives every rejected frame a reason:
+## analyze
 
-1. **Shots.** Frames are grouped into shots by the cuts from `extract`. A frame right at a cut moves to the side it aligns with, because manifest times are nominal and `scdet`'s are the source's. Frames of different shots are never treated as neighbours.
-2. **Quality**, per shot: `dark` (a fade; dim footage sits well above the threshold of 12), `bright`, `exposure` (clipped), `flat`, then `blur` when sharpness is below half the median of the frames within ±4 samples. Blur is judged against neighbours because motion blur lasts a few samples, while sharpness also follows content (a crisp truss, hazy distant slopes) for much longer.
-3. **Keyframes**, per shot: two frames are compared by aligning their thumbnails (the best global shift, coarse to fine). That gives the *shift* (1 − overlap) and the *residual* left after aligning, which picks up forward flight, zoom, turns and parallax. A window of frames runs while the view stays within `--min-shift` 0.2 and `--min-residual` 0.4 of its first frame. The sharpest frame of each window is kept and the rest are `similar`, with a reference to the kept frame. Kept neighbours overlap roughly 60–80%.
-4. **Duplicates** across shots and sources: a kept frame that aligns with a better kept frame (more pixels, then sharper) from another shot or source with residual below `--duplicate` 0.25 is a `duplicate`. This catches re-uploads, drone revisits and the famous angle twenty pilots filmed.
-5. **Gaps**: consecutive samples that moved more than `--gap-shift` 0.35 or don't align (`--gap-residual` 0.6) get a warning. That source needs a denser `--interval`.
+Decodes each frame once, at 360 px high so a 4K original and a 720p re-upload score alike. For each frame it measures sharpness (variance of the Laplacian), brightness, contrast, clipped pixels, flatness (the share of textureless blocks: sky, haze, fades, title cards), a luma histogram, and a 64×36 thumbnail. Results are cached by file size and modification time; `--force` re-measures everything.
 
-Output:
+## select
 
-- `selection.json`: settings, per-source summary, and a decision per frame (`keep`, `reason`, `ref`, `warn`, `shot`).
-- `selected.txt`: kept image names, for COLMAP's `--image_list_path`.
-- `sheet.html`: contact sheet, by source and shot. Kept frames are framed green, rejected ones are dimmed and framed by reason. Hover shows the numbers. You can hide reasons or sort a shot by sharpness. Open it from the dataset folder (it links to `images/`).
+Every rejected frame gets a reason:
 
-The report printed by `select` gives each source's sharpness p10/p50/p90. Compare sources with it. To drop a source that is soft throughout, set `--min-sharpness` (absolute, off by default) between that source's p90 and the good sources' p10.
+1. **Shots.** Frames are split at the cuts. A frame right at a cut moves to the side it matches.
+2. **Quality.** `dark` (a fade; dim footage is fine), `bright`, `exposure`, `flat`, and `blur` (under half the sharpness of frames within ±2 s; motion blur is brief, soft content lasts).
+3. **Keyframes.** Thumbnails are aligned to measure how far the view *shifted* and how much it *changed* otherwise (forward flight, turns). A window of frames lasts until the view has moved about 20%. The sharpest frame in each window is kept and the rest are `similar`. Kept neighbours overlap roughly 60–80%.
+4. **Duplicates.** A kept frame showing the same view as a better one from another source, another shot or a later pass is a `duplicate`. Better means more pixels, then sharper.
+5. **Gaps.** Consecutive samples too far apart to match get a warning: extract that source denser.
 
-Defaults are starting points, tuned on synthetic footage only. Tune them on the sheet. A frame kept wrongly costs little, because COLMAP drops what doesn't register. A frame rejected wrongly loses coverage.
+| Flag | Default | Raise it to... |
+| --- | --- | --- |
+| `--min-shift`, `--min-residual` | 0.2, 0.4 | keep fewer keyframes |
+| `--blur` | 0.5 | reject more frames as blurry (share of nearby median) |
+| `--min-sharpness` | off | drop a source that is soft throughout; the report's p10/p50/p90 per source show where |
+| `--flat` | 0.85 | keep more sky and haze |
+| `--dark`, `--bright`, `--clipped` | 12, 240, 0.4 | adjust the exposure rules |
+| `--duplicate` | 0.25 | treat less similar views as duplicates; 0 turns the check off |
+| `--gap-shift`, `--gap-residual` | 0.35, 0.6 | warn about gaps less often |
+
+Err towards keeping. A frame kept wrongly costs little, because COLMAP drops what doesn't register. A frame rejected wrongly loses coverage.
 
 ## COLMAP
 
-Extract features for the selected frames only:
-
 ```bash
-colmap feature_extractor \
-  --database_path ./missions/gorgopotamos/database.db \
-  --image_path ./missions/gorgopotamos/dataset/images \
-  --image_list_path ./missions/gorgopotamos/dataset/selected.txt
+colmap feature_extractor --database_path $D/../database.db \
+  --image_path $D/images --image_list_path $D/selected.txt
+colmap sequential_matcher --database_path $D/../database.db
+colmap mapper --database_path $D/../database.db --image_path $D/images --output_path $D/../sparse
 ```
 
-Then run matching and mapping using the COLMAP workflow appropriate for the footage.
+## Limits
 
-## Notes
+- Manifest timestamps are nominal (index × interval), not source timestamps.
+- Alignment models one global shift. Forward flight and zoom are measured as residual, not as shift.
+- The defaults are tuned on one 720p drone video and on synthetic footage.
 
-- Video frame timestamps in the manifest are nominal sample timestamps (`frame index × interval`). They do not account for unusual source stream start-time offsets.
-- `images/` and `manifest.json` are never changed by `analyze` or `select`; decisions live in `selection.json`.
-- Alignment models one global shift. That is right for pans, orbits and sideways passes. Forward flight and zoom show up as residual instead, so they get keyframes by residual.
+## Next
 
-## Sorting & Filtering
-
-we'll probably end up with hundreds of images of the bridge and comparatively few images of the gorge, slopes, forest and approaches.
-
-**Recommendation: don't enforce uniformity of video quality, lighting, weather or season. Enforce geometric consistency within individual reconstruction groups, and diversity across the overall dataset.**
-
-There is a big difference between reconstructing a 3D environment and creating a photorealistic panorama. We want the former.
-
-## **1. What matters for photogrammetry?**
-
-| Factor                     | Importance | Recommendation                      |
-| -------------------------- | ---------- | ----------------------------------- |
-| Camera viewpoint diversity | Critical   | Maximize                            |
-| Image overlap              | Critical   | Maintain                            |
-| Sharpness / motion blur    | Critical   | Reject blurry frames                |
-| Exposure consistency       | High       | Prefer consistent within a sequence |
-| Resolution                 | High       | Avoid extreme differences           |
-| Weather                    | Medium     | Clear visibility preferred          |
-| Time of day                | Medium     | Consistent within a sequence        |
-| Season                     | Low–medium | Can mix, with precautions           |
-| Sky appearance             | Low        | Usually not important               |
-
-The most important thing is that the same physical features remain recognizable across images.
-
-For example, a rock formation visible in 30 drone images from different angles is excellent.
-
-A bridge visible in 300 images from practically the same angle is mostly redundant.
-
-## **2. Can we mix seasons, weather and cameras?**
-
-Yes, but I'd distinguish between reconstruction and appearance.
-
-**Summer / lush vegetation**
-
-Excellent for reconstructing vegetation and identifying paths, but foliage can obscure terrain.
-
-Good source
-
-**Autumn**
-
-Different vegetation appearance and potentially better visibility through partially bare trees.
-
-Good supplementary source
-
-**Winter**
-
-Can reveal terrain hidden by foliage, but snow and seasonal ground changes complicate matching.
-
-Separate reconstruction group
-
-**Overcast / cloudy**
-
-Often excellent for photogrammetry because diffuse lighting reduces harsh shadows.
-
-Good source
-
-### **Rules for mixing material**
-
-- Different cameras: absolutely fine.
-- Different resolutions: fine, although avoid mixing tiny and very high-resolution images indiscriminately.
-- Different white balances: generally fine.
-- Different cloud conditions: fine.
-- Different seasons: useful for additional reference, but don't blindly merge into one reconstruction.
-- Snow-covered terrain versus snow-free terrain: keep separate.
-- Changed vegetation, river levels or construction: treat as potentially different geometry.
-
-One subtle issue: changing shadows can confuse feature matching. A rock in sunlight and the same rock under a completely different shadow may be less reliably matched.
-
-## **3. The biggest danger: bridge bias**
-
-I'd explicitly divide Gorgopotamos into geographical reconstruction zones.
-
-Our dataset should cover:
-
-## **Gorgopotamos coverage map**
-
-Conceptual reconstruction zones, not measured boundaries.
-
-# **01**
-
-**Bridge**
-
-Structure, piers, abutments, tracks
-
-# **02**
-
-**Northern gorge**
-
-Rock faces, slopes, vegetation
-
-# **03**
-
-**Southern gorge**
-
-Riverbanks, approaches, terrain
-
-# **04**
-
-**Western approach**
-
-Paths, forest, elevated ground
-
-# **05**
-
-**Eastern approach**
-
-Access routes and surrounding terrain
-
-# **06**
-
-**Riverbed**
-
-Boulders, banks and water course
-
-I would initially aim for something like this:
-
-| Zone             | Target share of selected images |
-| ---------------- | ------------------------------- |
-| Bridge           | 20%                             |
-| Northern gorge   | 20%                             |
-| Southern gorge   | 20%                             |
-| Western approach | 15%                             |
-| Eastern approach | 15%                             |
-| Riverbed         | 10%                             |
-
-These aren't strict photogrammetry quotas. They're coverage targets to prevent the bridge from dominating our dataset.
-
-Importantly, a single image can cover multiple zones.
-
-## **4. We should improve the collector to understand coverage**
-
-This is where I think we should invest next.
-
-Currently, our collector knows:
-
-- Source video.
-- Timestamp.
-- Resolution.
-- Category.
-- Frame number.
-
-It doesn't know whether a frame is useful.
-
-I'd introduce a richer metadata model:
-
-```
-type FrameMetadata struct {
-    Source      string
-    Timestamp   time.Duration
-
-    Category    string
-    Zone        string
-
-    Width       int
-    Height      int
-
-    Sharpness   float64
-    Brightness  float64
-
-    PerceptualHash string
-
-    Season      string
-    Weather     string
-    TimeOfDay   string
-
-    Selected    bool
-    Rejection   string
-}
-```
-
-Not every field needs automatic detection. Zone, season and weather can initially be manually assigned to a video or frame range.
-
-### **A particularly useful feature: contact-sheet review**
-
-We should eventually have:
-
-```
-reference-collector analyze \
-    --input ./gorgopotamos
-
-reference-collector contact-sheet \
-    --input ./gorgopotamos \
-    --group-by source
-
-reference-collector select \
-    --input ./gorgopotamos \
-    --max-similarity 0.95
-
-reference-collector report \
-    --input ./gorgopotamos
-```
-
-The report could show:
-
-- Number of source videos.
-- Total extracted frames.
-- Frames by resolution.
-- Frames by category.
-- Frames by geographical zone.
-- Blur distribution.
-- Duplicate percentage.
-- Estimated coverage gaps.
-
-I'd keep the original extracted frames immutable and put selection decisions into a separate manifest. That way we can change selection strategies without repeatedly extracting everything.
-
-## **5. One important distinction: COLMAP versus 3DGS**
-
-We should not optimize both for exactly the same thing.
-
-**COLMAP / photogrammetry**
-
-Wants stable visual features, sufficient overlap, sharpness and geometrically consistent viewpoints.
-
-**3D Gaussian Splatting**
-
-Benefits from diverse camera positions and good visibility of the scene, but can suffer when images depict different seasons, vegetation states or lighting conditions.
-
-My preference:
-
-1. Reconstruct geometry from the best consistent image groups.
-2. Align the separate reconstructions.
-3. Use geometry to establish a common world.
-4. Select a visually consistent subset for Gaussian splatting.
-5. Use additional seasonal footage as reference for vegetation and environmental assets.
-
-We should not let a beautiful but geometrically inconsistent image contaminate the foundation.
-
-## **6. What I would implement next**
-
-Recommended next milestone
-
-**Reference Collector v0.2 — Dataset Intelligence**
-
-| Feature                                 | Priority | Status |
-| --------------------------------------- | -------- | ------ |
-| Perceptual duplicate detection          | P0       | done (aligned thumbnails) |
-| Blur detection                          | P0       | done |
-| Contact sheet generation                | P0       | done (`sheet.html`) |
-| Video-level metadata/tags               | P0       | |
-| Frame selection manifest                | P1       | done (`selection.json`) |
-| Geographical zone tagging               | P1       | |
-| Coverage report                         | P1       | |
-| Automatic season/weather classification | P2       | |
-
-One further thought: let's avoid throwing away images just because they look similar. A stationary camera can still capture useful geometry if the subject moves, although moving objects themselves should generally be masked or excluded from reconstruction.
-
-**The guiding principle for Gorgopotamos should be: maximize spatial coverage, not frame count.**
-
-I'd rather have 800 sharp images covering the entire gorge from diverse viewpoints than 8,000 images of the railway bridge.
-
-We could split it into three stages:
-1. Quality analysis
-   - Detect blurry frames using Laplacian variance.
-   - Detect exact and perceptual duplicates.
-   - Record resolution and image dimensions.
-2. Visual review
-   - Generate contact sheets grouped by source video.
-   - Sort frames by quality.
-   - Mark the sharpest frame in each near-duplicate group as the preferred candidate.
-3. Coverage review
-   - Organise aerial, ground and railway material.
-   - Tag geographic zones: bridge, north gorge, south gorge, west approach, east approach and riverbed.
-   - Avoid selecting only the prettiest images at the expense of spatial coverage.
+- Zone tags per video or frame range, and a coverage report per zone
+- Overrides: force-keep or force-reject frames from the sheet, kept across re-runs
+- Video-level tags (season, weather, time of day), to keep reconstruction groups consistent

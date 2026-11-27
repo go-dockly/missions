@@ -9,5 +9,5 @@ hot/
 **.jpg
 # **/analysis.json
 # **/sheet.html
-collector
-collector.exe
+/collector
+/collector.exe
