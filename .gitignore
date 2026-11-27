@@ -7,3 +7,7 @@ hot/
 **/ols.json
 **.mp4
 **.jpg
+# **/analysis.json
+# **/sheet.html
+collector
+collector.exe

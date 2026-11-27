@@ -100,7 +100,47 @@ Spectacular set-piece
 
 
 
+**Best matches for “Gorgopotamos-style” (dramatic natural terrain + real WWII special-ops/sabotage history + usable modern visual coverage) that could plausibly work as a Commandos-style level out of the box:**
 
+### 1. Vemork / Rjukan (Telemark, Norway) – Operation Gunnerside (1943)
+The strongest single analogue.  
+Norwegian commandos (Kompani Linge) crossed a deep frozen gorge, infiltrated the heavy-water plant perched on a cliff ledge above the valley, and sabotaged the German nuclear program’s key facility without firing a shot. The landscape is pure Commandos: steep gorge, industrial plant clinging to the rock, river/valley below, high plateau approaches, winter conditions, railway elements.
+
+Modern coverage is solid for a remote industrial-heritage site:
+- Multiple drone flights over Vemork + Rjukan valley + Gaustatoppen (good aerials of the plant, gorge, and surrounding mountains).
+- Tourist/museum walkthroughs of the heavy-water cellar and plant exterior.
+- Enough varied viewpoints (aerial, ground, different seasons) that a collector pipeline like the Gorgopotamos one could produce a usable dataset, though not as dense as a major tourist bridge.
+
+Looks and feels the part immediately — industrial + dramatic gorge = classic sabotage level.
+
+### 2. Pointe du Hoc (Normandy, France) – US Rangers, D-Day 1944
+100-ft cliffs, bomb-cratered plateau, German casemates and gun positions, Channel views. Rangers scaled the cliffs under fire to neutralize the battery. Extremely “looks the part” for a vertical assault / cliff-climbing / bunker-clearing mission.
+
+YouTube coverage is excellent:
+- Many high-quality 4K drone flights showing the cliffs, craters, bunkers, and approach from the sea.
+- Walkthroughs, museum context, and repeated filming by Normandy specialists.
+- The site is preserved and open, so geometric consistency is high.
+
+Slightly more “D-Day set-piece” than pure small-team sabotage, but the verticality and ruined fortifications make it game-ready.
+
+### 3. Pegasus Bridge / Bénouville (Normandy)
+The classic coup-de-main: glider landing right next to the bridge, rapid seizure, then hold against counter-attacks. Canal, bridge structure, nearby château, fields, and the original bridge preserved as a museum piece.
+
+Very high YouTube density (drone flyovers, museum walkarounds, ground-level tours, battlefield walking videos). The site is compact, photogenic, and already heavily documented from multiple angles and seasons. Easy to extract a clean, high-overlap dataset.
+
+### Other notables (weaker on the “out-of-the-box Commandos level” axis)
+
+- **St Nazaire (Operation Chariot, 1942)** — Legendary destroyer-ram raid on the dry dock. Port infrastructure is still there and filmed, but modern commercial activity + larger scale make clean photogrammetry and “small team in dramatic terrain” harder. More of a big-raid set piece.
+- **Monte La Difensa / Italian mountains (First Special Service Force)** — Dramatic, but less dense modern tourist drone coverage.
+- Various other Normandy battery/bunker sites (Longues-sur-Mer, etc.) — good drone material, but less unique “mission story” punch than the three above.
+
+**Summary ranking for your use case** (dramatic real terrain + authentic special-ops history + enough public video for a frame-extraction pipeline):
+
+1. **Vemork/Rjukan** — closest spiritual and visual twin to Gorgopotamos.  
+2. **Pointe du Hoc** — best pure visual “looks like a game level already.”  
+3. **Pegasus Bridge** — highest practical coverage and easiest dataset.
+
+Vemork is the one that most feels like “another Gorgopotamos” — remote, gorge-dominated, industrial target, real commando sabotage story. If the collector tool is already tuned for bridge + gorge + mixed aerial/ground, it should transfer reasonably well.
 
 
 

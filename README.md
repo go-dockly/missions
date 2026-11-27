@@ -34,29 +34,43 @@ videos/
 
 Historical folders are skipped by default because archival footage should not be mixed into the modern photogrammetry reconstruction.
 
+## Workflow
+
+```bash
+D=./missions/gorgopotamos
+./collector extract --input $D/videos --output $D/dataset   # frames + shot cuts
+./collector analyze --dataset $D/dataset                     # scores, cached
+./collector select  --dataset $D/dataset                     # decisions + contact sheet
+open $D/dataset/sheet.html
+```
+
+Tune `select` thresholds by eye on the sheet and re-run it; it takes seconds and never touches `images/`. Re-run `analyze` only after extracting new videos (it measures only new or changed frames).
+
 ## Extract frames
 
 ```bash
 ./collector extract \
     --input ./missions/gorgopotamos/videos \
-    --output ./missions/gorgopotamos/dataset \
-    --interval 1s
+    --output ./missions/gorgopotamos/dataset
 ```
 
-Higher sampling density:
+The default interval is 500ms, denser than COLMAP needs: `select` picks keyframes by how far the view moved, so a hover gives one frame and a fast pass gives many. For very fast footage (train windows, low fast passes) try `--interval 250ms`; `select` says when a source needs it.
+
+`extract` also finds shot cuts with FFmpeg's `scdet` filter in a second full-rate pass (`--cuts=false` skips it, `--cut-threshold` tunes it, default 10). Cuts go into the manifest (`cuts_ms`). Datasets extracted before this still work: `select` then finds cuts between frames instead.
+
+Single category for a folder:
 
 ```bash
 ./collector extract \
   --input ./videos/aerial \
   --output ./dataset \
-  --interval 500ms \
   --category aerial
 ```
 
 Include historical folders only when explicitly requested:
 
 ```bash
-./reference-collector extract \
+./collector extract \
   --input ./videos \
   --output ./dataset \
   --interval 2s \
@@ -78,23 +92,57 @@ All images are placed in one flat directory, ready to pass to COLMAP. The manife
 
 The manifest is updated incrementally. Re-running extraction for a source replaces that source's previous frames and records while retaining records for other sources.
 
+## Analyze
+
+`analyze` decodes every frame once and stores, in `analysis.json`:
+
+| Score | What | Measured |
+| --- | --- | --- |
+| sharpness | variance of the Laplacian | on luma scaled to 360 px high, so a 4K original and a 720p re-upload score alike |
+| brightness, contrast | mean and deviation of luma | 0–255 |
+| clipped | share of crushed (<8) or blown (>247) pixels | |
+| flat | share of 8×8 blocks with almost no texture | sky, haze, fades, title-card backgrounds |
+| histogram | 16-bin luma histogram | cut detection fallback |
+| thumb | 64×36 luma thumbnail | everything about motion and duplicates |
+
+## Select
+
+`select` decides per frame and gives every rejected frame a reason:
+
+1. **Shots.** Frames are grouped into shots by the cuts from `extract`. Frames of different shots are never treated as neighbours.
+2. **Quality**, per shot: `dark`, `bright`, `exposure` (clipped), `flat`, then `blur` when sharpness is below half the shot's median. The threshold is relative because sharpness depends on content (forest vs. water) and on the source.
+3. **Keyframes**, per shot: two frames are compared by aligning their thumbnails (the best global shift, coarse to fine). That gives the *shift* (1 − overlap) and the *residual* left after aligning, which picks up forward flight, zoom, turns and parallax. A window of frames runs while the view stays within `--min-shift` 0.2 and `--min-residual` 0.4 of its first frame. The sharpest frame of each window is kept and the rest are `similar`, with a reference to the kept frame. Kept neighbours overlap roughly 60–80%.
+4. **Duplicates** across shots and sources: a kept frame that aligns with a better kept frame (more pixels, then sharper) from another shot or source with residual below `--duplicate` 0.25 is a `duplicate`. This catches re-uploads, drone revisits and the famous angle twenty pilots filmed.
+5. **Gaps**: consecutive samples that moved more than `--gap-shift` 0.35 or don't align (`--gap-residual` 0.6) get a warning. That source needs a denser `--interval`.
+
+Output:
+
+- `selection.json`: settings, per-source summary, and a decision per frame (`keep`, `reason`, `ref`, `warn`, `shot`).
+- `selected.txt`: kept image names, for COLMAP's `--image_list_path`.
+- `sheet.html`: contact sheet, by source and shot. Kept frames are framed green, rejected ones are dimmed and framed by reason. Hover shows the numbers. You can hide reasons or sort a shot by sharpness. Open it from the dataset folder (it links to `images/`).
+
+The report printed by `select` gives each source's sharpness p10/p50/p90. Compare sources with it. To drop a source that is soft throughout, set `--min-sharpness` (absolute, off by default) between that source's p90 and the good sources' p10.
+
+Defaults are starting points, tuned on synthetic footage only. Tune them on the sheet. A frame kept wrongly costs little, because COLMAP drops what doesn't register. A frame rejected wrongly loses coverage.
+
 ## COLMAP
 
-Example feature extraction:
+Extract features for the selected frames only:
 
 ```bash
 colmap feature_extractor \
   --database_path ./missions/gorgopotamos/database.db \
-  --image_path ./missions/gorgopotamos/images
+  --image_path ./missions/gorgopotamos/dataset/images \
+  --image_list_path ./missions/gorgopotamos/dataset/selected.txt
 ```
 
 Then run matching and mapping using the COLMAP workflow appropriate for the footage.
 
 ## Notes
 
-- The sampling interval is a target interval, not a guarantee that every sampled image is useful for SfM.
 - Video frame timestamps in the manifest are nominal sample timestamps (`frame index × interval`). They do not account for unusual source stream start-time offsets.
-- This first version does not perform blur filtering, perceptual deduplication, scene-change detection or image selection. Those are deliberate follow-up steps: first inspect contact sheets and reconstruction quality before adding heuristics.
+- `images/` and `manifest.json` are never changed by `analyze` or `select`; decisions live in `selection.json`.
+- Alignment models one global shift. That is right for pans, orbits and sideways passes. Forward flight and zoom show up as residual instead, so they get keyframes by residual.
 
 ## Sorting & Filtering
 
@@ -329,16 +377,16 @@ Recommended next milestone
 
 **Reference Collector v0.2 — Dataset Intelligence**
 
-| Feature                                 | Priority |
-| --------------------------------------- | -------- |
-| Perceptual duplicate detection          | P0       |
-| Blur detection                          | P0       |
-| Contact sheet generation                | P0       |
-| Video-level metadata/tags               | P0       |
-| Frame selection manifest                | P1       |
-| Geographical zone tagging               | P1       |
-| Coverage report                         | P1       |
-| Automatic season/weather classification | P2       |
+| Feature                                 | Priority | Status |
+| --------------------------------------- | -------- | ------ |
+| Perceptual duplicate detection          | P0       | done (aligned thumbnails) |
+| Blur detection                          | P0       | done |
+| Contact sheet generation                | P0       | done (`sheet.html`) |
+| Video-level metadata/tags               | P0       | |
+| Frame selection manifest                | P1       | done (`selection.json`) |
+| Geographical zone tagging               | P1       | |
+| Coverage report                         | P1       | |
+| Automatic season/weather classification | P2       | |
 
 One further thought: let's avoid throwing away images just because they look similar. A stationary camera can still capture useful geometry if the subject moves, although moving objects themselves should generally be masked or excluded from reconstruction.
 
