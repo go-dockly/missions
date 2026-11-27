@@ -20,6 +20,14 @@ brew install ffmpeg
 go build -o collector ./cmd/collector
 ```
 
+```bash
+go build -o collector ./cmd/collector
+D=missions/gorgopotamos/dataset
+./collector extract --input missions/gorgopotamos/videos --output $D
+./collector analyze --dataset $D
+./collector select  --dataset $D && open $D/sheet.html
+```
+
 ## Expected input layout
 
 Category inference uses directory names. These names are recognized:
